@@ -1,59 +1,72 @@
-from rdflib import Graph, Namespace, RDF, RDFS, OWL, URIRef
-from rdflib.namespace import SKOS, DCTERMS, XSD
-from rdflib.namespace import SH
+from rdflib import (
+    Graph, Namespace, RDF, RDFS, OWL,
+    URIRef
+)
+from rdflib.namespace import SKOS, DCTERMS, XSD, SH
 from rdflib.collection import Collection
 
 
-# ------------------------------------------
-# 1. Load Ontology
-# ------------------------------------------
+# -----------------------------------------------------
+# FIX: rdflib does NOT include sh:or → create manually
+# -----------------------------------------------------
+SH_OR = URIRef("http://www.w3.org/ns/shacl#or")
 
+
+# -----------------------------------------------------
+# 1. LOAD GRAPH
+# -----------------------------------------------------
 def load_graph(file_path):
     g = Graph()
     g.parse(file_path, format="turtle")
     return g
 
 
-# ------------------------------------------
-# 2. Extract SHACL property shapes
-# ------------------------------------------
-
+# -----------------------------------------------------
+# 2. EXTRACT SHACL PROPERTIES
+# -----------------------------------------------------
 def extract_shacl_properties(g, node):
     """
-    Extract all sh:property shapes defined under a Class or NodeShape.
-    Handles sh:or, sh:class, sh:datatype, sh:path, etc.
+    Extracts all SHACL properties for a given Class or NodeShape.
+    Handles sh:or lists, sh:datatype, sh:path, sh:class, etc.
     """
     props = []
 
     for shprop in g.objects(node, SH.property):
-
         prop_info = {}
 
+        # Loop inside property block
         for pred, obj in g.predicate_objects(shprop):
 
-            pred_name = pred.split("#")[-1] if "#" in pred else pred.split("/")[-1]
+            pred_name = (
+                pred.split("#")[-1]
+                if "#" in pred
+                else pred.split("/")[-1]
+            )
 
-            # -----------------------------------------
-            # Case 1: sh:or (RDF list of shapes)
-            # -----------------------------------------
-            if pred == SH.or_:
+            # ------------------------------------------------
+            # Case 1: sh:or → RDF list
+            # ------------------------------------------------
+            if pred == SH_OR:
                 or_list = []
                 collection = Collection(g, obj)
 
                 for item in collection:
                     nested_info = {}
                     for p2, o2 in g.predicate_objects(item):
-                        nested_pred = p2.split("#")[-1]
-                        nested_info[nested_pred] = str(o2)
-
+                        p2name = (
+                            p2.split("#")[-1]
+                            if "#" in p2
+                            else p2.split("/")[-1]
+                        )
+                        nested_info[p2name] = str(o2)
                     or_list.append(nested_info)
 
                 prop_info["or"] = or_list
                 continue
 
-            # -----------------------------------------
-            # Case 2: regular SHACL properties
-            # -----------------------------------------
+            # ------------------------------------------------
+            # Case 2: Normal SHACL properties
+            # ------------------------------------------------
             prop_info[pred_name] = str(obj)
 
         props.append(prop_info)
@@ -61,49 +74,45 @@ def extract_shacl_properties(g, node):
     return props
 
 
-# ------------------------------------------
-# 3. Extract class-level data
-# ------------------------------------------
-
+# -----------------------------------------------------
+# 3. EXTRACT CLASS DATA
+# -----------------------------------------------------
 def extract_class_info(g, cls):
     info = {}
 
     info["uri"] = str(cls)
 
-    # Labels
+    # rdfs:label
     label = g.value(cls, RDFS.label)
     if label:
         info["label"] = str(label)
 
-    # Definitions
+    # skos:definition
     definition = g.value(cls, SKOS.definition)
     if definition:
         info["definition"] = str(definition)
 
-    # altLabels
-    alt_labels = []
-    for alt in g.objects(cls, SKOS.altLabel):
-        alt_labels.append(str(alt))
+    # skos:altLabel
+    alt_labels = [str(a) for a in g.objects(cls, SKOS.altLabel)]
     if alt_labels:
         info["alt_labels"] = alt_labels
 
     # SHACL Properties
-    shacl_props = extract_shacl_properties(g, cls)
-    if shacl_props:
-        info["shacl_properties"] = shacl_props
+    sh_props = extract_shacl_properties(g, cls)
+    if sh_props:
+        info["shacl_properties"] = sh_props
 
     return info
 
 
-# ------------------------------------------
-# 4. Build final ontology dictionary
-# ------------------------------------------
-
+# -----------------------------------------------------
+# 4. MAIN ONTOLOGY EXTRACTION
+# -----------------------------------------------------
 def extract_full_ontology(file_path):
     g = load_graph(file_path)
+
     ontology_data = []
 
-    # Iterate all classes
     for cls in g.subjects(RDF.type, OWL.Class):
         cls_info = extract_class_info(g, cls)
         ontology_data.append(cls_info)
@@ -111,16 +120,14 @@ def extract_full_ontology(file_path):
     return ontology_data
 
 
-# ------------------------------------------
-# 5. Example usage
-# ------------------------------------------
-
+# -----------------------------------------------------
+# 5. Example Usage
+# -----------------------------------------------------
 if __name__ == "__main__":
-
     file_path = "medusa.ttl"
 
-    ontology = extract_full_ontology(file_path)
+    ontology_data = extract_full_ontology(file_path)
 
-    for item in ontology:
-        print("\n============================")
-        print(item)
+    for entry in ontology_data:
+        print("\n==============================")
+        print(entry)
