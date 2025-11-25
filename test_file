@@ -7,99 +7,139 @@ g = Graph()
 g.parse("medusa.ttl", format="turtle")
 
 # Namespaces
-MEDUSA = Namespace("http://example.org/medusa#")
-OPS = Namespace("http://example.org/ops#")
 SH = Namespace("http://www.w3.org/ns/shacl#")
 
 all_chunks = []
 
-# -------------------------------
-# 🔹 1. Extract CLASSES
-# -------------------------------
+
+# -------------------------------------------------
+# 1️⃣ Extract Classes + Their SHACL Properties
+# -------------------------------------------------
 for cls in g.subjects(RDF.type, OWL.Class):
-    label = g.value(cls, RDFS.label)
-    definition = g.value(cls, SKOS.definition)
-    subclass = g.value(cls, RDFS.subClassOf)
 
     text = f"Class: {cls.split('#')[-1]}\n"
-    if label: text += f"Label: {label}\n"
-    if definition: text += f"Definition: {definition}\n"
-    if subclass: text += f"SubclassOf: {subclass.split('#')[-1]}\n"
 
-    # Alt labels (skos:altLabel)
+    # Basic metadata
+    label = g.value(cls, RDFS.label)
+    if label:
+        text += f"Label: {label}\n"
+
+    definition = g.value(cls, SKOS.definition)
+    if definition:
+        text += f"Definition: {definition}\n"
+
+    subclass = g.value(cls, RDFS.subClassOf)
+    if subclass:
+        text += f"SubclassOf: {subclass.split('#')[-1]}\n"
+
+    # Alt labels
     for alt in g.objects(cls, SKOS.altLabel):
         text += f"AltLabel: {alt}\n"
 
+    # -------------------------------------------------
+    # SHACL properties (sh:property under the class)
+    # -------------------------------------------------
+    properties = list(g.objects(cls, SH.property))
+
+    if properties:
+        text += "Properties:\n"
+
+    for prop in properties:
+
+        path = g.value(prop, SH.path)
+        if not path:
+            continue
+
+        text += f"  - Path: {path.split('#')[-1]}\n"
+
+        datatype = g.value(prop, SH.datatype)
+        if datatype:
+            text += f"    Datatype: {datatype}\n"
+
+        # object constraints
+        for c in g.objects(prop, SH["class"]):
+            text += f"    ClassConstraint: {c.split('#')[-1]}\n"
+
+        # sh:or constraints
+        for or_list in g.objects(prop, SH["or"]):
+            for item in g.items(or_list):
+                cls2 = g.value(item, SH["class"])
+                if cls2:
+                    text += f"    OrClassConstraint: {cls2.split('#')[-1]}\n"
+
+        # minCount / maxCount / pattern
+        minc = g.value(prop, SH.minCount)
+        maxc = g.value(prop, SH.maxCount)
+        patt = g.value(prop, SH.pattern)
+
+        if minc:
+            text += f"    MinCount: {minc}\n"
+        if maxc:
+            text += f"    MaxCount: {maxc}\n"
+        if patt:
+            text += f"    Pattern: {patt}\n"
+
     all_chunks.append(text.strip())
 
 
-# -------------------------------
-# 🔹 2. Extract OBJECT PROPERTIES
-# -------------------------------
+
+# -------------------------------------------------
+# 2️⃣ Extract Object Properties
+# -------------------------------------------------
 for prop in g.subjects(RDF.type, OWL.ObjectProperty):
-    label = g.value(prop, RDFS.label)
-    definition = g.value(prop, SKOS.definition)
-    domain = g.value(prop, RDFS.domain)
-    range_ = g.value(prop, RDFS.range)
 
     text = f"ObjectProperty: {prop.split('#')[-1]}\n"
-    if label: text += f"Label: {label}\n"
-    if definition: text += f"Definition: {definition}\n"
-    if domain: text += f"Domain: {domain.split('#')[-1]}\n"
-    if range_: text += f"Range: {range_.split('#')[-1]}\n"
+
+    label = g.value(prop, RDFS.label)
+    if label:
+        text += f"Label: {label}\n"
+
+    definition = g.value(prop, SKOS.definition)
+    if definition:
+        text += f"Definition: {definition}\n"
+
+    domain = g.value(prop, RDFS.domain)
+    if domain:
+        text += f"Domain: {domain.split('#')[-1]}\n"
+
+    range_ = g.value(prop, RDFS.range)
+    if range_:
+        text += f"Range: {range_.split('#')[-1]}\n"
 
     all_chunks.append(text.strip())
 
 
-# -------------------------------
-# 🔹 3. Extract DATA PROPERTIES
-# -------------------------------
+
+# -------------------------------------------------
+# 3️⃣ Extract Data Properties
+# -------------------------------------------------
 for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
-    label = g.value(prop, RDFS.label)
-    definition = g.value(prop, SKOS.definition)
-    domain = g.value(prop, RDFS.domain)
-    datatype = g.value(prop, RDFS.range)
 
     text = f"DataProperty: {prop.split('#')[-1]}\n"
-    if label: text += f"Label: {label}\n"
-    if definition: text += f"Definition: {definition}\n"
-    if domain: text += f"Domain: {domain.split('#')[-1]}\n"
-    if datatype: text += f"Datatype: {datatype}\n"
 
-    all_chunks.append(text.strip())
+    label = g.value(prop, RDFS.label)
+    if label:
+        text += f"Label: {label}\n"
 
+    definition = g.value(prop, SKOS.definition)
+    if definition:
+        text += f"Definition: {definition}\n"
 
-# -------------------------------
-# 🔹 4. Extract SHACL PROPERTY SHAPES
-# -------------------------------
-for shape in g.subjects(RDF.type, SH.PropertyShape):
-    path = g.value(shape, SH.path)
-    datatype = g.value(shape, SH.datatype)
+    domain = g.value(prop, RDFS.domain)
+    if domain:
+        text += f"Domain: {domain.split('#')[-1]}\n"
 
-    text = "SHACL PropertyShape:\n"
-    if path:
-        text += f"Path: {path.split('#')[-1]}\n"
-
+    datatype = g.value(prop, RDFS.range)
     if datatype:
         text += f"Datatype: {datatype}\n"
 
-    # sh:class (object-type constraints)
-    for cls in g.objects(shape, SH["class"]):
-        text += f"ClassConstraint: {cls.split('#')[-1]}\n"
-
-    # sh:or case (list of constraints)
-    for or_list in g.objects(shape, SH["or"]):
-        for item in g.items(or_list):
-            cls = g.value(item, SH["class"])
-            if cls:
-                text += f"OrClassConstraint: {cls.split('#')[-1]}\n"
-
     all_chunks.append(text.strip())
 
 
-# -------------------------------
-# 🔹 Print Summary
-# -------------------------------
-print("\nTOTAL CHUNKS:", len(all_chunks))
+
+# -------------------------------------------------
+# Print Summary
+# -------------------------------------------------
+print("TOTAL CHUNKS:", len(all_chunks))
 for c in all_chunks[:3]:
     print("\n--- SAMPLE ---\n", c)
