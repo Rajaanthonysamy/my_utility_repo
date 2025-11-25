@@ -1,39 +1,126 @@
+from rdflib import Graph, Namespace, RDF, RDFS, OWL, URIRef
+from rdflib.namespace import SKOS, DCTERMS, XSD
+from rdflib.namespace import SH
 from rdflib.collection import Collection
 
+
+# ------------------------------------------
+# 1. Load Ontology
+# ------------------------------------------
+
+def load_graph(file_path):
+    g = Graph()
+    g.parse(file_path, format="turtle")
+    return g
+
+
+# ------------------------------------------
+# 2. Extract SHACL property shapes
+# ------------------------------------------
+
 def extract_shacl_properties(g, node):
+    """
+    Extract all sh:property shapes defined under a Class or NodeShape.
+    Handles sh:or, sh:class, sh:datatype, sh:path, etc.
+    """
     props = []
 
     for shprop in g.objects(node, SH.property):
+
         prop_info = {}
 
-        # Get all predicate → object
         for pred, obj in g.predicate_objects(shprop):
 
-            pred_name = pred.split("#")[-1]
+            pred_name = pred.split("#")[-1] if "#" in pred else pred.split("/")[-1]
 
-            # -----------------------------
-            # Case 1: Normal properties
-            # -----------------------------
-            if pred != SH.or_:
-                prop_info[pred_name] = str(obj)
-
-            # -----------------------------
-            # Case 2: sh:or (RDF list)
-            # -----------------------------
+            # -----------------------------------------
+            # Case 1: sh:or (RDF list of shapes)
+            # -----------------------------------------
             if pred == SH.or_:
-                or_shapes = []
+                or_list = []
                 collection = Collection(g, obj)
 
                 for item in collection:
-                    shape_details = {}
+                    nested_info = {}
                     for p2, o2 in g.predicate_objects(item):
-                        p2name = p2.split("#")[-1]
-                        shape_details[p2name] = str(o2)
+                        nested_pred = p2.split("#")[-1]
+                        nested_info[nested_pred] = str(o2)
 
-                    or_shapes.append(shape_details)
+                    or_list.append(nested_info)
 
-                prop_info["or"] = or_shapes
+                prop_info["or"] = or_list
+                continue
+
+            # -----------------------------------------
+            # Case 2: regular SHACL properties
+            # -----------------------------------------
+            prop_info[pred_name] = str(obj)
 
         props.append(prop_info)
 
     return props
+
+
+# ------------------------------------------
+# 3. Extract class-level data
+# ------------------------------------------
+
+def extract_class_info(g, cls):
+    info = {}
+
+    info["uri"] = str(cls)
+
+    # Labels
+    label = g.value(cls, RDFS.label)
+    if label:
+        info["label"] = str(label)
+
+    # Definitions
+    definition = g.value(cls, SKOS.definition)
+    if definition:
+        info["definition"] = str(definition)
+
+    # altLabels
+    alt_labels = []
+    for alt in g.objects(cls, SKOS.altLabel):
+        alt_labels.append(str(alt))
+    if alt_labels:
+        info["alt_labels"] = alt_labels
+
+    # SHACL Properties
+    shacl_props = extract_shacl_properties(g, cls)
+    if shacl_props:
+        info["shacl_properties"] = shacl_props
+
+    return info
+
+
+# ------------------------------------------
+# 4. Build final ontology dictionary
+# ------------------------------------------
+
+def extract_full_ontology(file_path):
+    g = load_graph(file_path)
+    ontology_data = []
+
+    # Iterate all classes
+    for cls in g.subjects(RDF.type, OWL.Class):
+        cls_info = extract_class_info(g, cls)
+        ontology_data.append(cls_info)
+
+    return ontology_data
+
+
+# ------------------------------------------
+# 5. Example usage
+# ------------------------------------------
+
+if __name__ == "__main__":
+
+    file_path = "medusa.ttl"
+
+    ontology = extract_full_ontology(file_path)
+
+    for item in ontology:
+        print("\n============================")
+        print(item)
