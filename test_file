@@ -1,86 +1,39 @@
-from rdflib import Graph, RDF, RDFS, OWL, SKOS, Namespace, Literal
-from rdflib.namespace import SH, DCTERMS, XSD
+from rdflib.collection import Collection
 
-g = Graph()
-g.parse("ontology.ttl", format="turtle")
+def extract_shacl_properties(g, node):
+    props = []
 
-# Your namespace (edit accordingly)
-MEDUSA = Namespace("http://system/medusa#")
-OPS = Namespace("http://system/ops#")
-
-def get_literals(subject, *predicates):
-    """Return all literal values for a subject filtered by predicates."""
-    values = []
-    for p in predicates:
-        for o in g.objects(subject, p):
-            if isinstance(o, Literal):
-                values.append(str(o))
-    return values
-
-def extract_shacl_properties(class_uri):
-    """Extract SHACL property shapes for a class."""
-    properties = []
-
-    for shape in g.objects(class_uri, SH.property):
+    for shprop in g.objects(node, SH.property):
         prop_info = {}
 
-        # property path
-        path = list(g.objects(shape, SH.path))
-        prop_info["path"] = [str(p) for p in path]
+        # Get all predicate → object
+        for pred, obj in g.predicate_objects(shprop):
 
-        # datatype (may be None)
-        datatype = list(g.objects(shape, SH.datatype))
-        prop_info["datatype"] = [str(d) for d in datatype]
+            pred_name = pred.split("#")[-1]
 
-        # min/max counts
-        prop_info["minCount"] = next(g.objects(shape, SH.minCount), None)
-        prop_info["maxCount"] = next(g.objects(shape, SH.maxCount), None)
+            # -----------------------------
+            # Case 1: Normal properties
+            # -----------------------------
+            if pred != SH.or_:
+                prop_info[pred_name] = str(obj)
 
-        # OR conditions: sh:or expects a list(rdf:List)
-        or_conditions = []
-        for or_list in g.objects(shape, SH.or_):
-            for or_item in g.items(or_list):
-                # each or_item may contain sh:class OR sh:datatype
-                cls = list(g.objects(or_item, SH["class"]))
-                datatype = list(g.objects(or_item, SH.datatype))
-                if cls:
-                    or_conditions.extend([str(c) for c in cls])
-                if datatype:
-                    or_conditions.extend([str(d) for d in datatype])
+            # -----------------------------
+            # Case 2: sh:or (RDF list)
+            # -----------------------------
+            if pred == SH.or_:
+                or_shapes = []
+                collection = Collection(g, obj)
 
-        prop_info["or_conditions"] = or_conditions
+                for item in collection:
+                    shape_details = {}
+                    for p2, o2 in g.predicate_objects(item):
+                        p2name = p2.split("#")[-1]
+                        shape_details[p2name] = str(o2)
 
-        properties.append(prop_info)
+                    or_shapes.append(shape_details)
 
-    return properties
+                prop_info["or"] = or_shapes
 
+        props.append(prop_info)
 
-def extract_class_info():
-    all_classes = []
-
-    for cls in g.subjects(RDF.type, OWL.Class):
-        info = {
-            "uri": str(cls),
-            "label": get_literals(cls, RDFS.label),
-            "definition": get_literals(cls, SKOS.definition, RDFS.comment, DCTERMS.description),
-            "altLabel": get_literals(cls, SKOS.altLabel),
-            "created": get_literals(cls, DCTERMS.created),
-            "creator": get_literals(cls, DCTERMS.creator),
-            "subClassOf": [str(o) for o in g.objects(cls, RDFS.subClassOf)],
-            "shacl_properties": extract_shacl_properties(cls)
-        }
-
-        # filter out empty keys
-        info = {k: v for k, v in info.items() if v}
-
-        all_classes.append(info)
-
-    return all_classes
-
-
-# Run extraction
-ontology_data = extract_class_info()
-
-# Print nicely
-import json
-print(json.dumps(ontology_data, indent=2))
+    return props
