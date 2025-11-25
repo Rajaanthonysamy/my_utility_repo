@@ -1,176 +1,105 @@
-from rdflib import (
-    Graph, Namespace, RDF, RDFS, OWL,
-    URIRef
-)
-from rdflib.namespace import SKOS, DCTERMS, XSD, SH
-from rdflib.collection import Collection
+from rdflib import Graph, Namespace, RDF, RDFS, OWL, SKOS
+from rdflib.namespace import DCTERMS, XSD
+import json
 
-# FIX for sh:or
-SH_OR = URIRef("http://www.w3.org/ns/shacl#or")
+# Load your ontology
+g = Graph()
+g.parse("medusa.ttl", format="turtle")
 
+# Namespaces
+MEDUSA = Namespace("http://example.org/medusa#")
+OPS = Namespace("http://example.org/ops#")
+SH = Namespace("http://www.w3.org/ns/shacl#")
 
-# ============================================================
-# LOAD GRAPH
-# ============================================================
-def load_graph(file_path):
-    g = Graph()
-    g.parse(file_path, format="turtle")
-    return g
+all_chunks = []
 
-
-# ============================================================
-# SHACL PROPERTIES EXTRACTOR
-# ============================================================
-def extract_shacl_properties(g, node):
-    props = []
-
-    for shprop in g.objects(node, SH.property):
-        prop_info = {}
-
-        for pred, obj in g.predicate_objects(shprop):
-
-            pred_name = pred.split("#")[-1] if "#" in pred else pred.split("/")[-1]
-
-            # SHACL or
-            if pred == SH_OR:
-                or_list = []
-                collection = Collection(g, obj)
-
-                for item in collection:
-                    nested = {}
-                    for p2, o2 in g.predicate_objects(item):
-                        nested_pred = p2.split("#")[-1]
-                        nested[nested_pred] = str(o2)
-                    or_list.append(nested)
-                prop_info["or"] = or_list
-                continue
-
-            prop_info[pred_name] = str(obj)
-
-        props.append(prop_info)
-
-    return props
-
-
-# ============================================================
-# CLASS EXTRACTOR
-# ============================================================
-def extract_class_info(g, cls):
-    info = {
-        "type": "owl:Class",
-        "uri": str(cls),
-    }
-
+# -------------------------------
+# 🔹 1. Extract CLASSES
+# -------------------------------
+for cls in g.subjects(RDF.type, OWL.Class):
     label = g.value(cls, RDFS.label)
-    if label:
-        info["label"] = str(label)
-
     definition = g.value(cls, SKOS.definition)
-    if definition:
-        info["definition"] = str(definition)
+    subclass = g.value(cls, RDFS.subClassOf)
 
-    # alt labels
-    alt_labels = [str(a) for a in g.objects(cls, SKOS.altLabel)]
-    if alt_labels:
-        info["alt_labels"] = alt_labels
+    text = f"Class: {cls.split('#')[-1]}\n"
+    if label: text += f"Label: {label}\n"
+    if definition: text += f"Definition: {definition}\n"
+    if subclass: text += f"SubclassOf: {subclass.split('#')[-1]}\n"
 
-    # SHACL
-    sh_props = extract_shacl_properties(g, cls)
-    if sh_props:
-        info["shacl_properties"] = sh_props
+    # Alt labels (skos:altLabel)
+    for alt in g.objects(cls, SKOS.altLabel):
+        text += f"AltLabel: {alt}\n"
 
-    return info
+    all_chunks.append(text.strip())
 
 
-# ============================================================
-# DATATYPE PROPERTY EXTRACTOR
-# ============================================================
-def extract_datatype_property(g, prop):
-    info = {
-        "type": "owl:DatatypeProperty",
-        "uri": str(prop),
-    }
-
+# -------------------------------
+# 🔹 2. Extract OBJECT PROPERTIES
+# -------------------------------
+for prop in g.subjects(RDF.type, OWL.ObjectProperty):
     label = g.value(prop, RDFS.label)
-    if label:
-        info["label"] = str(label)
-
     definition = g.value(prop, SKOS.definition)
-    if definition:
-        info["definition"] = str(definition)
-
-    created = g.value(prop, DCTERMS.created)
-    if created:
-        info["created"] = str(created)
-
-    creator = g.value(prop, DCTERMS.creator)
-    if creator:
-        info["creator"] = str(creator)
-
-    return info
-
-
-# ============================================================
-# OBJECT PROPERTY EXTRACTOR
-# ============================================================
-def extract_object_property(g, prop):
-    info = {
-        "type": "owl:ObjectProperty",
-        "uri": str(prop),
-    }
-
-    label = g.value(prop, RDFS.label)
-    if label:
-        info["label"] = str(label)
-
-    definition = g.value(prop, SKOS.definition)
-    if definition:
-        info["definition"] = str(definition)
-
-    # Domain
     domain = g.value(prop, RDFS.domain)
-    if domain:
-        info["domain"] = str(domain)
-
-    # Range
     range_ = g.value(prop, RDFS.range)
-    if range_:
-        info["range"] = str(range_)
 
-    return info
+    text = f"ObjectProperty: {prop.split('#')[-1]}\n"
+    if label: text += f"Label: {label}\n"
+    if definition: text += f"Definition: {definition}\n"
+    if domain: text += f"Domain: {domain.split('#')[-1]}\n"
+    if range_: text += f"Range: {range_.split('#')[-1]}\n"
 
-
-# ============================================================
-# MAIN EXTRACTION
-# ============================================================
-def extract_full_ontology(file_path):
-    g = load_graph(file_path)
-
-    ontology = []
-
-    # ---- CLASSES ----
-    for cls in g.subjects(RDF.type, OWL.Class):
-        ontology.append(extract_class_info(g, cls))
-
-    # ---- DATATYPE PROPERTIES ----
-    for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
-        ontology.append(extract_datatype_property(g, prop))
-
-    # ---- OBJECT PROPERTIES ----
-    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
-        ontology.append(extract_object_property(g, prop))
-
-    return ontology
+    all_chunks.append(text.strip())
 
 
-# ============================================================
-# RUN
-# ============================================================
-if __name__ == "__main__":
-    file_path = "medusa.ttl"
+# -------------------------------
+# 🔹 3. Extract DATA PROPERTIES
+# -------------------------------
+for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
+    label = g.value(prop, RDFS.label)
+    definition = g.value(prop, SKOS.definition)
+    domain = g.value(prop, RDFS.domain)
+    datatype = g.value(prop, RDFS.range)
 
-    ontology_data = extract_full_ontology(file_path)
+    text = f"DataProperty: {prop.split('#')[-1]}\n"
+    if label: text += f"Label: {label}\n"
+    if definition: text += f"Definition: {definition}\n"
+    if domain: text += f"Domain: {domain.split('#')[-1]}\n"
+    if datatype: text += f"Datatype: {datatype}\n"
 
-    for item in ontology_data:
-        print("\n==============================")
-        print(item)
+    all_chunks.append(text.strip())
+
+
+# -------------------------------
+# 🔹 4. Extract SHACL PROPERTY SHAPES
+# -------------------------------
+for shape in g.subjects(RDF.type, SH.PropertyShape):
+    path = g.value(shape, SH.path)
+    datatype = g.value(shape, SH.datatype)
+
+    text = "SHACL PropertyShape:\n"
+    if path:
+        text += f"Path: {path.split('#')[-1]}\n"
+
+    if datatype:
+        text += f"Datatype: {datatype}\n"
+
+    # sh:class (object-type constraints)
+    for cls in g.objects(shape, SH["class"]):
+        text += f"ClassConstraint: {cls.split('#')[-1]}\n"
+
+    # sh:or case (list of constraints)
+    for or_list in g.objects(shape, SH["or"]):
+        for item in g.items(or_list):
+            cls = g.value(item, SH["class"])
+            if cls:
+                text += f"OrClassConstraint: {cls.split('#')[-1]}\n"
+
+    all_chunks.append(text.strip())
+
+
+# -------------------------------
+# 🔹 Print Summary
+# -------------------------------
+print("\nTOTAL CHUNKS:", len(all_chunks))
+for c in all_chunks[:3]:
+    print("\n--- SAMPLE ---\n", c)
