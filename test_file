@@ -1,0 +1,225 @@
+from rdflib import Graph, RDF, RDFS, OWL, Namespace
+from rdflib.namespace import SKOS, DCTERMS, XSD, SH
+
+# -----------------------------------------------------------
+# LOAD ONTOLOGY
+# -----------------------------------------------------------
+
+def load_graph(path):
+    g = Graph()
+    g.parse(path, format="turtle")
+    return g
+
+
+# -----------------------------------------------------------
+# HELPERS: LABELS, COMMENTS, DEFINITIONS
+# -----------------------------------------------------------
+
+def get_labels(g, node):
+    labels = []
+
+    for lbl in g.objects(node, RDFS.label):
+        labels.append(str(lbl))
+
+    for lbl in g.objects(node, SKOS.prefLabel):
+        labels.append(str(lbl))
+
+    return labels
+
+
+def get_alt_labels(g, node):
+    alt = []
+    for lbl in g.objects(node, SKOS.altLabel):
+        alt.append(str(lbl))
+    for lbl in g.objects(node, SKOS.hiddenLabel):
+        alt.append(str(lbl))
+    return alt
+
+
+def get_comment(g, node):
+    comment = g.value(node, RDFS.comment)
+    return str(comment) if comment else None
+
+
+def get_definition(g, node):
+    d = g.value(node, SKOS.definition)
+    return str(d) if d else None
+
+
+# -----------------------------------------------------------
+# EXTRACT SHACL PROPERTIES
+# -----------------------------------------------------------
+
+def extract_shacl_properties(g, node):
+    props = []
+
+    for shprop in g.objects(node, SH.property):
+
+        path = g.value(shprop, SH.path)
+        datatype = g.value(shprop, SH.datatype)
+        cls = g.value(shprop, SH["class"])
+        minc = g.value(shprop, SH.minCount)
+        maxc = g.value(shprop, SH.maxCount)
+        pattern = g.value(shprop, SH.pattern)
+
+        props.append({
+            "path": str(path) if path else None,
+            "datatype": str(datatype) if datatype else None,
+            "class": str(cls) if cls else None,
+            "minCount": str(minc) if minc else None,
+            "maxCount": str(maxc) if maxc else None,
+            "pattern": str(pattern) if pattern else None
+        })
+
+    return props
+
+
+# -----------------------------------------------------------
+# EXTRACT OBJECT PROPERTIES (domain, range)
+# -----------------------------------------------------------
+
+def extract_object_properties(g):
+    object_props = []
+
+    for prop in g.subjects(RDF.type, OWL.ObjectProperty):
+
+        label = get_labels(g, prop)
+        alt = get_alt_labels(g, prop)
+        domain = g.value(prop, RDFS.domain)
+        range_ = g.value(prop, RDFS.range)
+        comment = get_comment(g, prop)
+
+        object_props.append({
+            "property": str(prop),
+            "labels": label,
+            "altLabels": alt,
+            "domain": str(domain) if domain else None,
+            "range": str(range_) if range_ else None,
+            "comment": comment
+        })
+
+    return object_props
+
+
+# -----------------------------------------------------------
+# EXTRACT DATA PROPERTIES
+# -----------------------------------------------------------
+
+def extract_data_properties(g):
+    data_props = []
+
+    for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
+
+        label = get_labels(g, prop)
+        alt = get_alt_labels(g, prop)
+        domain = g.value(prop, RDFS.domain)
+        dtype = g.value(prop, RDFS.range)
+        comment = get_comment(g, prop)
+
+        data_props.append({
+            "property": str(prop),
+            "labels": label,
+            "altLabels": alt,
+            "domain": str(domain) if domain else None,
+            "datatype": str(dtype) if dtype else None,
+            "comment": comment
+        })
+
+    return data_props
+
+
+# -----------------------------------------------------------
+# EXTRACT CLASS INFORMATION
+# -----------------------------------------------------------
+
+def extract_classes(g):
+    classes = []
+
+    for cls in g.subjects(RDF.type, OWL.Class):
+
+        labels = get_labels(g, cls)
+        alt = get_alt_labels(g, cls)
+        comment = get_comment(g, cls)
+        definition = get_definition(g, cls)
+
+        subclasses = [str(x) for x in g.objects(cls, RDFS.subClassOf)]
+        shacl_props = extract_shacl_properties(g, cls)
+
+        classes.append({
+            "class": str(cls),
+            "labels": labels,
+            "altLabels": alt,
+            "description": comment,
+            "definition": definition,
+            "subClassOf": subclasses,
+            "shaclProperties": shacl_props
+        })
+
+    return classes
+
+
+# -----------------------------------------------------------
+# CONVERT ALL DATA INTO NATURAL LANGUAGE CHUNKS
+# -----------------------------------------------------------
+
+def build_chunks(classes, obj_props, dt_props):
+    chunks = []
+
+    for c in classes:
+        text = f"""
+Class: {c['class']}
+Labels: {', '.join(c['labels'])}
+Alternate Labels: {', '.join(c['altLabels'])}
+
+Description: {c['description']}
+Definition: {c['definition']}
+
+Subclass Of: {', '.join(c['subClassOf'])}
+
+SHACL Properties:
+"""
+        for p in c["shaclProperties"]:
+            text += f"- Path: {p['path']}, Datatype: {p['datatype']}, Class: {p['class']}, minCount: {p['minCount']}, maxCount: {p['maxCount']}, pattern: {p['pattern']}\n"
+
+        chunks.append(text)
+
+    # Also add object properties
+    for p in obj_props:
+        text = f"""
+Object Property: {p['property']}
+Labels: {', '.join(p['labels'])}
+Alternative Labels: {', '.join(p['altLabels'])}
+Domain: {p['domain']}
+Range: {p['range']}
+Description: {p['comment']}
+"""
+        chunks.append(text)
+
+    # Add datatype properties
+    for p in dt_props:
+        text = f"""
+Datatype Property: {p['property']}
+Labels: {', '.join(p['labels'])}
+Alternative Labels: {', '.join(p['altLabels'])}
+Domain: {p['domain']}
+Datatype: {p['datatype']}
+Description: {p['comment']}
+"""
+        chunks.append(text)
+
+    return chunks
+
+
+# -----------------------------------------------------------
+# MAIN FUNCTION
+# -----------------------------------------------------------
+
+def extract_ontology_useful_data(path):
+    g = load_graph(path)
+
+    classes = extract_classes(g)
+    obj_props = extract_object_properties(g)
+    dt_props = extract_data_properties(g)
+
+    chunks = build_chunks(classes, obj_props, dt_props)
+    return chunks
