@@ -1,93 +1,140 @@
-from rdflib import Graph, RDF, RDFS, OWL, Namespace
-from rdflib.namespace import SH, XSD
+from rdflib import Graph, Namespace, RDF, RDFS, OWL, URIRef
+from rdflib.namespace import SKOS, SH
+from rdflib.collection import Collection
 
-def parse_ontology(ttl_path):
+# -------------------
+# Helpers
+# -------------------
+def load_graph(path):
     g = Graph()
-    g.parse(ttl_path, format="turtle")
+    g.parse(path, format="turtle")
+    return g
 
-    # capture prefixes
-    prefix_map = {pfx: str(uri) for pfx, uri in g.namespaces()}
+def build_prefix_map(g):
+    return {pfx: str(ns) for pfx, ns in g.namespaces()}
 
-    classes = []
-    data_properties = []
-    object_properties = []
-    shapes = []
-
-    for s in g.subjects(RDF.type, OWL.Class):
-        classes.append(extract_class(g, s, prefix_map))
-
-    for s in g.subjects(RDF.type, OWL.DatatypeProperty):
-        data_properties.append(extract_dataprop(g, s, prefix_map))
-
-    for s in g.subjects(RDF.type, OWL.ObjectProperty):
-        object_properties.append(extract_objprop(g, s, prefix_map))
-
-    for s in g.subjects(RDF.type, SH.NodeShape):
-        shapes.append(extract_shape(g, s, prefix_map))
-    
-    return classes, data_properties, object_properties, shapes
-
-
-def get_prefixed(uri, prefix_map):
-    """Convert full URI to prefixed form"""
+def prefixed(uri: str, prefix_map: dict):
+    if not uri:
+        return None
     for pfx, ns in prefix_map.items():
         if uri.startswith(ns):
             return f"{pfx}:{uri[len(ns):]}"
-    return uri  # fallback full URI
+    return uri
 
+# SHACL or predicate may not be in rdflib SH namespace directly -> create URIRef
+SH_OR = URIRef("http://www.w3.org/ns/shacl#or")
 
-def extract_class(g, class_uri, prefix_map):
-    label = g.value(class_uri, RDFS.label)
-    definition = g.value(class_uri, Namespace("http://www.w3.org/2004/02/skos/core#").definition)
-    subclass = g.value(class_uri, RDFS.subClassOf)
-
-    return {
-        "class": get_prefixed(str(class_uri), prefix_map),
-        "label": str(label) if label else None,
-        "definition": str(definition) if definition else None,
-        "subclass_of": get_prefixed(str(subclass), prefix_map) if subclass else None,
-    }
-
-
-def extract_dataprop(g, prop_uri, prefix_map):
-    label = g.value(prop_uri, RDFS.label)
-    definition = g.value(prop_uri, Namespace("http://www.w3.org/2004/02/skos/core#").definition)
-    datatype = g.value(prop_uri, RDFS.range)
-
-    return {
-        "datatype_property": get_prefixed(str(prop_uri), prefix_map),
-        "label": str(label) if label else None,
-        "definition": str(definition) if definition else None,
-        "datatype": get_prefixed(str(datatype), prefix_map) if datatype else None,
-    }
-
-
-def extract_objprop(g, prop_uri, prefix_map):
-    domain = g.value(prop_uri, RDFS.domain)
-    range_ = g.value(prop_uri, RDFS.range)
-
-    return {
-        "object_property": get_prefixed(str(prop_uri), prefix_map),
-        "domain": get_prefixed(str(domain), prefix_map) if domain else None,
-        "range": get_prefixed(str(range_), prefix_map) if range_ else None,
-    }
-
-
-def extract_shape(g, shape_uri, prefix_map):
+# -------------------
+# Extractors
+# -------------------
+def extract_shacl_props_for_class(g, cls, prefix_map):
+    """Return list of dicts for each sh:property attached to cls (NodeShape)."""
     props = []
+    for shp in g.objects(cls, SH.property):
+        p = {}
+        # normal predicates inside the property shape
+        for pred, obj in g.predicate_objects(shp):
+            # handle sh:or (RDF list)
+            if pred == SH_OR:
+                items = []
+                coll = Collection(g, obj)
+                for it in coll:
+                    item_info = {}
+                    for p2, o2 in g.predicate_objects(it):
+                        key = _short_pred(p2)
+                        item_info[key] = prefixed(str(o2), prefix_map)
+                    items.append(item_info)
+                p["or"] = items
+                continue
 
-    for prop in g.objects(shape_uri, SH.property):
-        path = g.value(prop, SH.path)
-        datatype = g.value(prop, SH.datatype)
-        class_ = g.value(prop, SH["class"])
+            key = _short_pred(pred)
+            # convert obj to prefixed if URI, else to literal string
+            p[key] = prefixed(str(obj), prefix_map) if isinstance(obj, URIRef) else str(obj)
+        props.append(p)
+    return props
 
-        props.append({
-            "path": get_prefixed(str(path), prefix_map) if path else None,
-            "datatype": get_prefixed(str(datatype), prefix_map) if datatype else None,
-            "class": get_prefixed(str(class_), prefix_map) if class_ else None
-        })
+def _short_pred(pred):
+    """Return local name for a predicate (e.g., sh:path -> 'path')."""
+    s = str(pred)
+    if "#" in s:
+        return s.split("#")[-1]
+    return s.split("/")[-1]
 
-    return {
-        "shape": get_prefixed(str(shape_uri), prefix_map),
-        "properties": props,
-    }
+def find_dataprops_for_class(g, cls, prefix_map):
+    results = []
+    for dp in g.subjects(RDF.type, OWL.DatatypeProperty):
+        domain = g.value(dp, RDFS.domain)
+        if domain and str(domain) == str(cls):
+            results.append({
+                "property": prefixed(str(dp), prefix_map),
+                "label": _lit(g.value(dp, RDFS.label)),
+                "definition": _lit(g.value(dp, SKOS.definition)),
+                "range": prefixed(str(g.value(dp, RDFS.range)), prefix_map) if g.value(dp, RDFS.range) else None
+            })
+    return results
+
+def find_objprops_for_class(g, cls, prefix_map):
+    results = []
+    for op in g.subjects(RDF.type, OWL.ObjectProperty):
+        domain = g.value(op, RDFS.domain)
+        if domain and str(domain) == str(cls):
+            results.append({
+                "property": prefixed(str(op), prefix_map),
+                "label": _lit(g.value(op, RDFS.label)),
+                "definition": _lit(g.value(op, SKOS.definition)),
+                "range": prefixed(str(g.value(op, RDFS.range)), prefix_map) if g.value(op, RDFS.range) else None
+            })
+    return results
+
+def _lit(o):
+    return str(o) if o is not None else None
+
+# -------------------
+# Main: extract classes with attached properties
+# -------------------
+def extract_classes_with_properties(ttl_path):
+    g = load_graph(ttl_path)
+    prefix_map = build_prefix_map(g)
+    classes = []
+
+    for cls in g.subjects(RDF.type, OWL.Class):
+        cls_uri = str(cls)
+        obj = {
+            "class": prefixed(cls_uri, prefix_map),
+            "label": _lit(g.value(cls, RDFS.label)),
+            "definition": _lit(g.value(cls, SKOS.definition)),
+            "altLabels": [str(x) for x in g.objects(cls, SKOS.altLabel)],
+            "subClassOf": [prefixed(str(x), prefix_map) for x in g.objects(cls, RDFS.subClassOf)],
+            # placeholders to be filled
+            "shacl_properties": [],
+            "datatype_properties": [],
+            "object_properties": []
+        }
+
+        # SHACL props declared under this class (because class is also NodeShape)
+        cls_shacl = extract_shacl_props_for_class(g, cls, prefix_map)
+        if cls_shacl:
+            obj["shacl_properties"] = cls_shacl
+
+        # Find datatype properties whose domain is this class
+        ds = find_dataprops_for_class(g, cls, prefix_map)
+        if ds:
+            obj["datatype_properties"] = ds
+
+        # Find object properties whose domain is this class
+        os = find_objprops_for_class(g, cls, prefix_map)
+        if os:
+            obj["object_properties"] = os
+
+        classes.append(obj)
+
+    return classes
+
+# -------------------
+# Example usage
+# -------------------
+if __name__ == "__main__":
+    path = "medusa.ttl"
+    result = extract_classes_with_properties(path)
+    import json
+    print(json.dumps(result, indent=2))
