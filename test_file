@@ -1,145 +1,93 @@
-from rdflib import Graph, Namespace, RDF, RDFS, OWL, SKOS
-from rdflib.namespace import DCTERMS, XSD
-import json
+from rdflib import Graph, RDF, RDFS, OWL, Namespace
+from rdflib.namespace import SH, XSD
 
-# Load your ontology
-g = Graph()
-g.parse("medusa.ttl", format="turtle")
+def parse_ontology(ttl_path):
+    g = Graph()
+    g.parse(ttl_path, format="turtle")
 
-# Namespaces
-SH = Namespace("http://www.w3.org/ns/shacl#")
+    # capture prefixes
+    prefix_map = {pfx: str(uri) for pfx, uri in g.namespaces()}
 
-all_chunks = []
+    classes = []
+    data_properties = []
+    object_properties = []
+    shapes = []
+
+    for s in g.subjects(RDF.type, OWL.Class):
+        classes.append(extract_class(g, s, prefix_map))
+
+    for s in g.subjects(RDF.type, OWL.DatatypeProperty):
+        data_properties.append(extract_dataprop(g, s, prefix_map))
+
+    for s in g.subjects(RDF.type, OWL.ObjectProperty):
+        object_properties.append(extract_objprop(g, s, prefix_map))
+
+    for s in g.subjects(RDF.type, SH.NodeShape):
+        shapes.append(extract_shape(g, s, prefix_map))
+    
+    return classes, data_properties, object_properties, shapes
 
 
-# -------------------------------------------------
-# 1️⃣ Extract Classes + Their SHACL Properties
-# -------------------------------------------------
-for cls in g.subjects(RDF.type, OWL.Class):
+def get_prefixed(uri, prefix_map):
+    """Convert full URI to prefixed form"""
+    for pfx, ns in prefix_map.items():
+        if uri.startswith(ns):
+            return f"{pfx}:{uri[len(ns):]}"
+    return uri  # fallback full URI
 
-    text = f"Class: {cls.split('#')[-1]}\n"
 
-    # Basic metadata
-    label = g.value(cls, RDFS.label)
-    if label:
-        text += f"Label: {label}\n"
+def extract_class(g, class_uri, prefix_map):
+    label = g.value(class_uri, RDFS.label)
+    definition = g.value(class_uri, Namespace("http://www.w3.org/2004/02/skos/core#").definition)
+    subclass = g.value(class_uri, RDFS.subClassOf)
 
-    definition = g.value(cls, SKOS.definition)
-    if definition:
-        text += f"Definition: {definition}\n"
+    return {
+        "class": get_prefixed(str(class_uri), prefix_map),
+        "label": str(label) if label else None,
+        "definition": str(definition) if definition else None,
+        "subclass_of": get_prefixed(str(subclass), prefix_map) if subclass else None,
+    }
 
-    subclass = g.value(cls, RDFS.subClassOf)
-    if subclass:
-        text += f"SubclassOf: {subclass.split('#')[-1]}\n"
 
-    # Alt labels
-    for alt in g.objects(cls, SKOS.altLabel):
-        text += f"AltLabel: {alt}\n"
+def extract_dataprop(g, prop_uri, prefix_map):
+    label = g.value(prop_uri, RDFS.label)
+    definition = g.value(prop_uri, Namespace("http://www.w3.org/2004/02/skos/core#").definition)
+    datatype = g.value(prop_uri, RDFS.range)
 
-    # -------------------------------------------------
-    # SHACL properties (sh:property under the class)
-    # -------------------------------------------------
-    properties = list(g.objects(cls, SH.property))
+    return {
+        "datatype_property": get_prefixed(str(prop_uri), prefix_map),
+        "label": str(label) if label else None,
+        "definition": str(definition) if definition else None,
+        "datatype": get_prefixed(str(datatype), prefix_map) if datatype else None,
+    }
 
-    if properties:
-        text += "Properties:\n"
 
-    for prop in properties:
+def extract_objprop(g, prop_uri, prefix_map):
+    domain = g.value(prop_uri, RDFS.domain)
+    range_ = g.value(prop_uri, RDFS.range)
 
+    return {
+        "object_property": get_prefixed(str(prop_uri), prefix_map),
+        "domain": get_prefixed(str(domain), prefix_map) if domain else None,
+        "range": get_prefixed(str(range_), prefix_map) if range_ else None,
+    }
+
+
+def extract_shape(g, shape_uri, prefix_map):
+    props = []
+
+    for prop in g.objects(shape_uri, SH.property):
         path = g.value(prop, SH.path)
-        if not path:
-            continue
-
-        text += f"  - Path: {path.split('#')[-1]}\n"
-
         datatype = g.value(prop, SH.datatype)
-        if datatype:
-            text += f"    Datatype: {datatype}\n"
+        class_ = g.value(prop, SH["class"])
 
-        # object constraints
-        for c in g.objects(prop, SH["class"]):
-            text += f"    ClassConstraint: {c.split('#')[-1]}\n"
+        props.append({
+            "path": get_prefixed(str(path), prefix_map) if path else None,
+            "datatype": get_prefixed(str(datatype), prefix_map) if datatype else None,
+            "class": get_prefixed(str(class_), prefix_map) if class_ else None
+        })
 
-        # sh:or constraints
-        for or_list in g.objects(prop, SH["or"]):
-            for item in g.items(or_list):
-                cls2 = g.value(item, SH["class"])
-                if cls2:
-                    text += f"    OrClassConstraint: {cls2.split('#')[-1]}\n"
-
-        # minCount / maxCount / pattern
-        minc = g.value(prop, SH.minCount)
-        maxc = g.value(prop, SH.maxCount)
-        patt = g.value(prop, SH.pattern)
-
-        if minc:
-            text += f"    MinCount: {minc}\n"
-        if maxc:
-            text += f"    MaxCount: {maxc}\n"
-        if patt:
-            text += f"    Pattern: {patt}\n"
-
-    all_chunks.append(text.strip())
-
-
-
-# -------------------------------------------------
-# 2️⃣ Extract Object Properties
-# -------------------------------------------------
-for prop in g.subjects(RDF.type, OWL.ObjectProperty):
-
-    text = f"ObjectProperty: {prop.split('#')[-1]}\n"
-
-    label = g.value(prop, RDFS.label)
-    if label:
-        text += f"Label: {label}\n"
-
-    definition = g.value(prop, SKOS.definition)
-    if definition:
-        text += f"Definition: {definition}\n"
-
-    domain = g.value(prop, RDFS.domain)
-    if domain:
-        text += f"Domain: {domain.split('#')[-1]}\n"
-
-    range_ = g.value(prop, RDFS.range)
-    if range_:
-        text += f"Range: {range_.split('#')[-1]}\n"
-
-    all_chunks.append(text.strip())
-
-
-
-# -------------------------------------------------
-# 3️⃣ Extract Data Properties
-# -------------------------------------------------
-for prop in g.subjects(RDF.type, OWL.DatatypeProperty):
-
-    text = f"DataProperty: {prop.split('#')[-1]}\n"
-
-    label = g.value(prop, RDFS.label)
-    if label:
-        text += f"Label: {label}\n"
-
-    definition = g.value(prop, SKOS.definition)
-    if definition:
-        text += f"Definition: {definition}\n"
-
-    domain = g.value(prop, RDFS.domain)
-    if domain:
-        text += f"Domain: {domain.split('#')[-1]}\n"
-
-    datatype = g.value(prop, RDFS.range)
-    if datatype:
-        text += f"Datatype: {datatype}\n"
-
-    all_chunks.append(text.strip())
-
-
-
-# -------------------------------------------------
-# Print Summary
-# -------------------------------------------------
-print("TOTAL CHUNKS:", len(all_chunks))
-for c in all_chunks[:3]:
-    print("\n--- SAMPLE ---\n", c)
+    return {
+        "shape": get_prefixed(str(shape_uri), prefix_map),
+        "properties": props,
+    }
