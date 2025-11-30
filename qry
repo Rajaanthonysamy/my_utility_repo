@@ -1,0 +1,12 @@
+Aggregation queries are questions that involve counting, grouping, averaging, or summarizing data from the knowledge graph.
+These queries typically include:
+
+Counting entities (e.g., number of products, number of batches)
+
+Filtering by date ranges (e.g., between Jan 2024 and Nov 2025)
+
+Summarizing statuses (completed, ongoing, failed, etc.)
+
+Statistical operations like MIN, MAX, AVG
+
+GROUP BY operations (e.g., by product, by plant, by category)
