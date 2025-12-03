@@ -9,15 +9,18 @@ def extract_bucket_chunks(bucket_json):
         # Combine all examples in a single chunk
         example_texts = []
         for idx, example in enumerate(examples):
+            uq = example.get("user_question", "")
+            qd = example.get("query_description", "")
+            sq = example.get("query", "")
             example_texts.append(
-                f"User Question: {example['user_question']}\n"
-                f"Query Description: {example['query_description']}\n"
-                f"SPARQL Query: {example['query']}"
+                f"Example {idx+1}:\nUser Question: {uq}\nQuery Description: {qd}\nSPARQL Query: {sq}"
             )
-        full_text = f"Bucket: {bucket_name}\nDescription: {bucket_desc}\n" + "\n---\n".join(example_texts)
+
+        full_text = f"Bucket: {bucket_name}\nDescription: {bucket_desc}\n\n" + "\n\n".join(example_texts)
 
         bucket_chunks.append(full_text.strip())
 
+        # Metadata
         bucket_metadatas.append({
             "doc_type": "query_bucket",
             "bucket_name": bucket_name,
