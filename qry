@@ -4,24 +4,24 @@ def extract_bucket_chunks(bucket_json):
 
     for bucket_name, bucket_info in bucket_json.items():
         bucket_desc = bucket_info.get("description", "")
+        examples = bucket_info.get("example_queries", [])
 
-        for idx, example in enumerate(bucket_info.get("example_queries", [])):
-            text = (
-                f"Bucket: {bucket_name}\n"
-                f"Description: {bucket_desc}\n"
+        # Combine all examples in a single chunk
+        example_texts = []
+        for idx, example in enumerate(examples):
+            example_texts.append(
                 f"User Question: {example['user_question']}\n"
                 f"Query Description: {example['query_description']}\n"
                 f"SPARQL Query: {example['query']}"
             )
-            bucket_chunks.append(text.strip())
+        full_text = f"Bucket: {bucket_name}\nDescription: {bucket_desc}\n" + "\n---\n".join(example_texts)
 
-            bucket_metadatas.append({
-                "doc_type": "query_bucket",
-                "bucket_name": bucket_name,
-                "example_id": idx,
-                "user_question": example["user_question"],
-                "query_description": example["query_description"],
-                "query": example["query"]
-            })
+        bucket_chunks.append(full_text.strip())
+
+        bucket_metadatas.append({
+            "doc_type": "query_bucket",
+            "bucket_name": bucket_name,
+            "num_examples": len(examples)
+        })
 
     return bucket_chunks, bucket_metadatas
