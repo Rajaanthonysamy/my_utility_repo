@@ -1,17 +1,25 @@
-inal_docs = []
+def extract_example_chunks(example_list):
+    chunks = []
+    metadatas = []
 
-for doc, sparql_list in zip(retrieved_docs, sparql_queries_per_doc):
-    lines = doc["page_content"].strip().split("\n")
-    output_lines = []
-    example_idx = 0
-    
-    for line in lines:
-        output_lines.append(line)
-        if line.startswith("Query Description:"):
-            # Append the corresponding SPARQL query
-            if example_idx < len(sparql_list):
-                output_lines.append(f"SPARQL Query: {sparql_list[example_idx]}")
-                example_idx += 1
-    
-    # Combine back into single string
-    final_docs.append("\n".join(output_lines))
+    for idx, ex in enumerate(example_list):
+        uq = ex.get("user_question", "")
+        qd = ex.get("query_description", "")
+        sq = ex.get("query", "")
+
+        # One chunk per example
+        text = f"""
+Example {idx+1}
+User Question: {uq}
+Query Description: {qd}
+SPARQL Query: {sq}
+""".strip()
+
+        chunks.append(text)
+
+        metadatas.append({
+            "doc_type": "example_query",
+            "example_id": idx + 1
+        })
+
+    return chunks, metadatas
