@@ -1,12 +1,27 @@
-Aggregation queries are questions that involve counting, grouping, averaging, or summarizing data from the knowledge graph.
-These queries typically include:
+def extract_bucket_chunks(bucket_json):
+    bucket_chunks = []
+    bucket_metadatas = []
 
-Counting entities (e.g., number of products, number of batches)
+    for bucket_name, bucket_info in bucket_json.items():
+        bucket_desc = bucket_info.get("description", "")
 
-Filtering by date ranges (e.g., between Jan 2024 and Nov 2025)
+        for idx, example in enumerate(bucket_info.get("example_queries", [])):
+            text = (
+                f"Bucket: {bucket_name}\n"
+                f"Description: {bucket_desc}\n"
+                f"User Question: {example['user_question']}\n"
+                f"Query Description: {example['query_description']}\n"
+                f"SPARQL Query: {example['query']}"
+            )
+            bucket_chunks.append(text.strip())
 
-Summarizing statuses (completed, ongoing, failed, etc.)
+            bucket_metadatas.append({
+                "doc_type": "query_bucket",
+                "bucket_name": bucket_name,
+                "example_id": idx,
+                "user_question": example["user_question"],
+                "query_description": example["query_description"],
+                "query": example["query"]
+            })
 
-Statistical operations like MIN, MAX, AVG
-
-GROUP BY operations (e.g., by product, by plant, by category)
+    return bucket_chunks, bucket_metadatas
