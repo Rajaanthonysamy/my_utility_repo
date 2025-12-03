@@ -1,30 +1,19 @@
-def extract_bucket_chunks(bucket_json):
-    bucket_chunks = []
-    bucket_metadatas = []
+def merge_sparql_with_bucket(doc_content, sparql_queries):
+    """
+    doc_content: string retrieved from the bucket document
+    sparql_queries: list of SPARQL queries corresponding to examples
+    Returns a string where each example includes its SPARQL query
+    """
+    lines = doc_content.split("\n")
+    merged_lines = []
+    query_idx = 0
 
-    for bucket_name, bucket_info in bucket_json.items():
-        bucket_desc = bucket_info.get("description", "")
-        examples = bucket_info.get("example_queries", [])
+    for line in lines:
+        merged_lines.append(line)
+        # Detect the end of example's query description
+        if line.strip().startswith("query description"):
+            if query_idx < len(sparql_queries):
+                merged_lines.append(f"SPARQL Query: {sparql_queries[query_idx]}")
+                query_idx += 1
 
-        # Combine all examples in a single chunk
-        example_texts = []
-        for idx, example in enumerate(examples):
-            uq = example.get("user_question", "")
-            qd = example.get("query_description", "")
-            sq = example.get("query", "")
-            example_texts.append(
-                f"Example {idx+1}:\nUser Question: {uq}\nQuery Description: {qd}\nSPARQL Query: {sq}"
-            )
-
-        full_text = f"Bucket: {bucket_name}\nDescription: {bucket_desc}\n\n" + "\n\n".join(example_texts)
-
-        bucket_chunks.append(full_text.strip())
-
-        # Metadata
-        bucket_metadatas.append({
-            "doc_type": "query_bucket",
-            "bucket_name": bucket_name,
-            "num_examples": len(examples)
-        })
-
-    return bucket_chunks, bucket_metadatas
+    return "\n".join(merged_lines)
