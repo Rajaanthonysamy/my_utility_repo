@@ -1,19 +1,17 @@
-def merge_sparql_with_bucket(doc_content, sparql_queries):
-    """
-    doc_content: string retrieved from the bucket document
-    sparql_queries: list of SPARQL queries corresponding to examples
-    Returns a string where each example includes its SPARQL query
-    """
-    lines = doc_content.split("\n")
-    merged_lines = []
-    query_idx = 0
+inal_docs = []
 
+for doc, sparql_list in zip(retrieved_docs, sparql_queries_per_doc):
+    lines = doc["page_content"].strip().split("\n")
+    output_lines = []
+    example_idx = 0
+    
     for line in lines:
-        merged_lines.append(line)
-        # Detect the end of example's query description
-        if line.strip().startswith("query description"):
-            if query_idx < len(sparql_queries):
-                merged_lines.append(f"SPARQL Query: {sparql_queries[query_idx]}")
-                query_idx += 1
-
-    return "\n".join(merged_lines)
+        output_lines.append(line)
+        if line.startswith("Query Description:"):
+            # Append the corresponding SPARQL query
+            if example_idx < len(sparql_list):
+                output_lines.append(f"SPARQL Query: {sparql_list[example_idx]}")
+                example_idx += 1
+    
+    # Combine back into single string
+    final_docs.append("\n".join(output_lines))
