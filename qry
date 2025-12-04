@@ -1,8 +1,6 @@
 podman run -d \
-  --name pgvector-db \
-  -e POSTGRES_USER=admin \
-  -e POSTGRES_PASSWORD=admin123 \
-  -e POSTGRES_DB=mydb \
-  -p 5432:5432 \
-  -v pgvector_data:/var/lib/postgresql/data \
-  ankane/pgvector
+  --name pgadmin4 \
+  -p 5050:80 \
+  -e PGADMIN_DEFAULT_EMAIL=admin@admin.com \
+  -e PGADMIN_DEFAULT_PASSWORD=admin123 \
+  docker.io/dpage/pgadmin4
