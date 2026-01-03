@@ -1,7 +1,6 @@
 from pystardog import Connection
-import json
 
-class OntologyExtractor:
+class RAGOptimizedExtractor:
     def __init__(self, endpoint, database, username, password):
         self.conn = Connection(
             database=database,
@@ -10,298 +9,137 @@ class OntologyExtractor:
             password=password
         )
     
-    def extract_complete_ontology(self):
-        """Extract complete ontology structure"""
+    def get_class_centric_documents(self):
+        """Create rich, class-centric documents for RAG"""
         
-        ontology = {
-            'namespaces': self.get_namespaces(),
-            'classes': self.get_classes(),
-            'object_properties': self.get_object_properties(),
-            'datatype_properties': self.get_datatype_properties(),
-            'property_characteristics': self.get_property_characteristics(),
-            'restrictions': self.get_restrictions(),
-            'individuals': self.get_sample_individuals()
-        }
-        
-        return ontology
-    
-    def get_namespaces(self):
-        """Extract all namespaces used"""
-        query = """
-        SELECT DISTINCT ?namespace
-        WHERE {
-          {
-            SELECT DISTINCT (REPLACE(STR(?s), "(.*[/#])[^/#]*$", "$1") AS ?namespace)
-            WHERE { ?s a ?type }
-          }
-          UNION
-          {
-            SELECT DISTINCT (REPLACE(STR(?p), "(.*[/#])[^/#]*$", "$1") AS ?namespace)
-            WHERE { ?s ?p ?o }
-          }
-        }
-        """
-        
-        results = self.conn.select(query)
-        namespaces = []
-        
-        for binding in results['results']['bindings']:
-            ns = binding['namespace']['value']
-            if ns and ns not in ['http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-                                  'http://www.w3.org/2000/01/rdf-schema#',
-                                  'http://www.w3.org/2002/07/owl#']:
-                namespaces.append(ns)
-        
-        return list(set(namespaces))
-    
-    def get_classes(self):
-        """Get all OWL classes"""
+        # Query to get classes with all related info
         query = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         
-        SELECT DISTINCT ?class ?label ?comment ?subClassOf
+        SELECT DISTINCT 
+          ?class 
+          ?classLabel 
+          ?classComment
+          ?subClassOf
+          ?subClassLabel
+          (GROUP_CONCAT(DISTINCT ?property; separator="|") AS ?properties)
+          (GROUP_CONCAT(DISTINCT ?propertyLabel; separator="|") AS ?propertyLabels)
+          (GROUP_CONCAT(DISTINCT ?range; separator="|") AS ?ranges)
+          (GROUP_CONCAT(DISTINCT ?rangeLabel; separator="|") AS ?rangeLabels)
         WHERE {
           ?class a owl:Class .
-          OPTIONAL { ?class rdfs:label ?label }
-          OPTIONAL { ?class rdfs:comment ?comment }
-          OPTIONAL { ?class rdfs:subClassOf ?subClassOf }
+          OPTIONAL { ?class rdfs:label ?classLabel }
+          OPTIONAL { ?class rdfs:comment ?classComment }
+          OPTIONAL { 
+            ?class rdfs:subClassOf ?subClassOf .
+            OPTIONAL { ?subClassOf rdfs:label ?subClassLabel }
+          }
           
-          FILTER(?class != owl:Thing)
-        }
-        """
-        
-        results = self.conn.select(query)
-        classes = []
-        
-        for binding in results['results']['bindings']:
-            class_data = {
-                'uri': binding['class']['value'],
-                'label': binding.get('label', {}).get('value', 
-                        self._extract_local_name(binding['class']['value'])),
-                'comment': binding.get('comment', {}).get('value', ''),
-                'subClassOf': binding.get('subClassOf', {}).get('value', '')
+          # Get properties that have this class as domain
+          OPTIONAL {
+            ?property rdfs:domain ?class .
+            OPTIONAL { ?property rdfs:label ?propertyLabel }
+            OPTIONAL { 
+              ?property rdfs:range ?range .
+              OPTIONAL { ?range rdfs:label ?rangeLabel }
             }
-            classes.append(class_data)
-        
-        return classes
-    
-    def get_object_properties(self):
-        """Get all object properties"""
-        query = """
-        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        
-        SELECT DISTINCT ?property ?label ?comment ?domain ?range ?subPropertyOf ?inverseOf
-        WHERE {
-          ?property a owl:ObjectProperty .
-          OPTIONAL { ?property rdfs:label ?label }
-          OPTIONAL { ?property rdfs:comment ?comment }
-          OPTIONAL { ?property rdfs:domain ?domain }
-          OPTIONAL { ?property rdfs:range ?range }
-          OPTIONAL { ?property rdfs:subPropertyOf ?subPropertyOf }
-          OPTIONAL { ?property owl:inverseOf ?inverseOf }
-        }
-        """
-        
-        results = self.conn.select(query)
-        properties = []
-        
-        for binding in results['results']['bindings']:
-            prop_data = {
-                'uri': binding['property']['value'],
-                'label': binding.get('label', {}).get('value',
-                        self._extract_local_name(binding['property']['value'])),
-                'comment': binding.get('comment', {}).get('value', ''),
-                'domain': binding.get('domain', {}).get('value', ''),
-                'range': binding.get('range', {}).get('value', ''),
-                'subPropertyOf': binding.get('subPropertyOf', {}).get('value', ''),
-                'inverseOf': binding.get('inverseOf', {}).get('value', '')
-            }
-            properties.append(prop_data)
-        
-        return properties
-    
-    def get_datatype_properties(self):
-        """Get all datatype properties"""
-        query = """
-        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        
-        SELECT DISTINCT ?property ?label ?comment ?domain ?range
-        WHERE {
-          ?property a owl:DatatypeProperty .
-          OPTIONAL { ?property rdfs:label ?label }
-          OPTIONAL { ?property rdfs:comment ?comment }
-          OPTIONAL { ?property rdfs:domain ?domain }
-          OPTIONAL { ?property rdfs:range ?range }
-        }
-        """
-        
-        results = self.conn.select(query)
-        properties = []
-        
-        for binding in results['results']['bindings']:
-            prop_data = {
-                'uri': binding['property']['value'],
-                'label': binding.get('label', {}).get('value',
-                        self._extract_local_name(binding['property']['value'])),
-                'comment': binding.get('comment', {}).get('value', ''),
-                'domain': binding.get('domain', {}).get('value', ''),
-                'range': binding.get('range', {}).get('value', '')
-            }
-            properties.append(prop_data)
-        
-        return properties
-    
-    def get_property_characteristics(self):
-        """Get property characteristics (functional, transitive, etc.)"""
-        query = """
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        
-        SELECT DISTINCT ?property ?characteristic
-        WHERE {
-          ?property a owl:ObjectProperty .
+          }
           
-          {
-            ?property a owl:FunctionalProperty .
-            BIND("Functional" AS ?characteristic)
-          }
-          UNION
-          {
-            ?property a owl:InverseFunctionalProperty .
-            BIND("InverseFunctional" AS ?characteristic)
-          }
-          UNION
-          {
-            ?property a owl:TransitiveProperty .
-            BIND("Transitive" AS ?characteristic)
-          }
-          UNION
-          {
-            ?property a owl:SymmetricProperty .
-            BIND("Symmetric" AS ?characteristic)
-          }
+          FILTER(?class != owl:Thing && ?class != owl:Nothing)
         }
+        GROUP BY ?class ?classLabel ?classComment ?subClassOf ?subClassLabel
+        ORDER BY ?class
         """
         
         results = self.conn.select(query)
-        characteristics = []
+        documents = []
         
         for binding in results['results']['bindings']:
-            characteristics.append({
-                'property': binding['property']['value'],
-                'characteristic': binding['characteristic']['value']
+            class_uri = binding['class']['value']
+            class_label = binding.get('classLabel', {}).get('value', 
+                         class_uri.split('#')[-1].split('/')[-1])
+            class_comment = binding.get('classComment', {}).get('value', '')
+            
+            # Parse properties
+            properties_str = binding.get('properties', {}).get('value', '')
+            property_labels_str = binding.get('propertyLabels', {}).get('value', '')
+            ranges_str = binding.get('ranges', {}).get('value', '')
+            range_labels_str = binding.get('rangeLabels', {}).get('value', '')
+            
+            properties = properties_str.split('|') if properties_str else []
+            property_labels = property_labels_str.split('|') if property_labels_str else []
+            ranges = ranges_str.split('|') if ranges_str else []
+            range_labels = range_labels_str.split('|') if range_labels_str else []
+            
+            # Build rich text description
+            text = self._build_class_document(
+                class_label, 
+                class_comment, 
+                binding.get('subClassLabel', {}).get('value', ''),
+                properties,
+                property_labels,
+                ranges,
+                range_labels
+            )
+            
+            documents.append({
+                'type': 'class',
+                'uri': class_uri,
+                'label': class_label,
+                'text': text,
+                'metadata': {
+                    'class_uri': class_uri,
+                    'properties': properties,
+                    'property_labels': property_labels
+                }
             })
         
-        return characteristics
+        return documents
     
-    def get_restrictions(self):
-        """Get class restrictions"""
-        query = """
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    def _build_class_document(self, class_label, class_comment, parent_class, 
+                              properties, property_labels, ranges, range_labels):
+        """Build semantically rich text for embedding"""
         
-        SELECT DISTINCT ?class ?property ?restrictionType ?value
-        WHERE {
-          ?class rdfs:subClassOf ?restriction .
-          ?restriction a owl:Restriction .
-          ?restriction owl:onProperty ?property .
-          
-          {
-            ?restriction owl:someValuesFrom ?value .
-            BIND("someValuesFrom" AS ?restrictionType)
-          }
-          UNION
-          {
-            ?restriction owl:allValuesFrom ?value .
-            BIND("allValuesFrom" AS ?restrictionType)
-          }
-          UNION
-          {
-            ?restriction owl:minCardinality ?value .
-            BIND("minCardinality" AS ?restrictionType)
-          }
-          UNION
-          {
-            ?restriction owl:maxCardinality ?value .
-            BIND("maxCardinality" AS ?restrictionType)
-          }
-        }
-        """
+        text = f"Class: {class_label}"
         
-        results = self.conn.select(query)
-        restrictions = []
+        if class_comment:
+            text += f". Description: {class_comment}"
         
-        for binding in results['results']['bindings']:
-            restrictions.append({
-                'class': binding['class']['value'],
-                'property': binding['property']['value'],
-                'type': binding['restrictionType']['value'],
-                'value': binding['value']['value']
-            })
+        if parent_class:
+            text += f". This is a type of {parent_class}"
         
-        return restrictions
-    
-    def get_sample_individuals(self, limit=50):
-        """Get sample instances for context"""
-        query = f"""
-        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        # Add properties in natural language
+        if property_labels:
+            text += f". Properties of {class_label} include: "
+            prop_descriptions = []
+            
+            for i, prop_label in enumerate(property_labels):
+                if prop_label:  # Skip empty labels
+                    range_label = range_labels[i] if i < len(range_labels) else 'unknown'
+                    if range_label:
+                        prop_descriptions.append(f"{prop_label} (which relates to {range_label})")
+                    else:
+                        prop_descriptions.append(prop_label)
+            
+            text += ", ".join(prop_descriptions)
         
-        SELECT DISTINCT ?individual ?type ?label
-        WHERE {{
-          ?individual a ?type .
-          ?type a <http://www.w3.org/2002/07/owl#Class> .
-          OPTIONAL {{ ?individual rdfs:label ?label }}
-        }}
-        LIMIT {limit}
-        """
+        text += "."
         
-        results = self.conn.select(query)
-        individuals = []
-        
-        for binding in results['results']['bindings']:
-            individuals.append({
-                'uri': binding['individual']['value'],
-                'type': binding['type']['value'],
-                'label': binding.get('label', {}).get('value', '')
-            })
-        
-        return individuals
-    
-    def _extract_local_name(self, uri):
-        """Extract local name from URI"""
-        if '#' in uri:
-            return uri.split('#')[-1]
-        elif '/' in uri:
-            return uri.split('/')[-1]
-        return uri
-    
-    def save_to_file(self, filename='ontology_complete.json'):
-        """Extract and save complete ontology"""
-        ontology = self.extract_complete_ontology()
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(ontology, f, indent=2, ensure_ascii=False)
-        
-        print(f"Ontology saved to {filename}")
-        print(f"  Classes: {len(ontology['classes'])}")
-        print(f"  Object Properties: {len(ontology['object_properties'])}")
-        print(f"  Datatype Properties: {len(ontology['datatype_properties'])}")
-        
-        return ontology
+        return text
 
 # Usage
-extractor = OntologyExtractor(
+extractor = RAGOptimizedExtractor(
     endpoint="http://localhost:5820",
-    database="your_database",
+    database="my_database",
     username="admin",
     password="admin"
 )
 
-# Extract everything
-ontology = extractor.save_to_file('ontology_complete.json')
+class_documents = extractor.get_class_centric_documents()
+
+# Example output:
+# "Class: Person. Description: An individual human being. Properties of Person include: 
+#  hasName (which relates to String), worksFor (which relates to Organization), 
+#  hasAge (which relates to Integer), livesIn (which relates to Location)."
